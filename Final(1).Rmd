@@ -1,0 +1,548 @@
+---
+title: "Final(1)"
+author: "Gabriel Garcia-Ruiz, 917320019"
+date: "2023-06-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+```
+
+```{r}
+session=list()
+for(i in 1:18){
+  session[[i]]=readRDS(paste('./sessions/session',i,'.rds',sep=''))
+  # print(session[[i]]$mouse_name)
+  # print(session[[i]]$date_exp)
+  
+}
+```
+
+
+# Final
+
+## Abstract
+
+This data science project aims to predict the the outcome of a feedback variable. We will use a subset of a larger data set. This subset is of mice whose neuro-activty was recorded by various metrics. The primary objective is to build a prediction model that can accurately predict the outcome of a feedback variable. 
+
+We begin by performing exploratory data analysis to gain a better understanding of the data we are working with. We seek to identify patterns in the to motivate our data integration and model.
+
+Data integration involves constructing our own data frame from the original data set that is useful to conduct statistical analysis. This is important given the complexity of the original data set, it is difficult to work with directly. 
+
+Finally, when we have constructed a useful data frame we will build a prediction model using logistic regression. The main performance metric is accuracy. We want to predict the outcome variable on a hand-picked subset, our data frame, and using hand-picked prediction variables from our exploratory analysis.
+
+The findings reveal a that number of number of brain areas engaged, number of neurons, success rate, and spike count are significant predictors of feedback type. The model accuracy was 73%, while the recall of 0, and an F1-score of NaN. The accuracy hold promise, but the recall and F1-scores suggest some changes to the model are needed for better accuracy.
+
+The implications of this project include that neural activity including number of neurons and brain areas engaged, the spike count of neurons are good predictors of how a mouse will perform a decision-based task.  
+
+## Introduction
+
+We will analyze the study conducted by Steinmetz et al. (2019). Our focus is on subset of their experiments on 4 of the 10 mice and 18 of the 39 sessions. Each session is composed of hundreds of trials where visual stimuli were presented to the mice. The stimuli were contrast level differences between a left and right panel, with 4 levels of contrast. If the mouse correctly identified which side had a lower contrast, the trial was a success. Success (or feedback type) therefore was binary variables either (1) for success or (-1) for failure. A reward was given for a successful trial. 
+
+The data structure given is 18 RDS files for each session. Each session includes the variables: contrast_left, contrast_right, feedback_type, mouse_name, brain_area, date_exp, and spks and time. Contrast left and contrast right take on one of the four contrast values described before (0, 0.25, 0.5, 1). brain_area refers to the brain area where neural activity took place. date_exp is the date the experiment took place. spks is a list of matrices where the rows of the matrices are neurons and the columns are time bins. Time is a list of the times neural activity took place.
+
+
+The objective of this project is to use the aforementioned data set to build a prediction model for feedback types (feedback_type). This will  include preliminary, exploratory dat analysis, to get to observe potential patterns in the data. Then we perform data integration by combining the data in from all 18 session into a data frame of useful variables (removing not useful ones). Our prediction model will be based on our initial data analysis and will use our newly constructed data frame to perform logistic regression. The model selection will be analyzed by tweaking the model for optimality. Performance will be judged by accuracy, recall, and F1 score.
+
+## Data Exploration
+
+### i
+
+The following is a table of summary statistics for the data set. Note: n_brain_areas is the number of brain areas that we engaged in a session, and success_rate is the percentage of positive feedback types there were in a session.
+
+```{r}
+library(knitr)
+
+# empty data frame to store session information
+session_table <- data.frame(
+  mouse_name = character(),
+  date_exp = character(),
+  n_brain_area = integer(),
+  n_neurons = integer(),
+  n_trials = integer(),
+  success_rate = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# loop through each session
+for (i in 1:18) {
+  session_data <- session[[i]]
+  
+  # extract session information
+  mouse_name <- session_data$mouse_name
+  date_exp <- session_data$date_exp
+  n_brain_area <- length(unique(session_data$brain_area))
+  n_neurons <- nrow(session_data$spks[[1]])
+  n_trials <- length(session_data$feedback_type)
+  success_rate <- sum(session_data$feedback_type == 1) / n_trials
+  
+  # add session information to table
+  session_table <- rbind(session_table, data.frame(mouse_name, date_exp, n_brain_area, n_neurons, n_trials, success_rate))
+}
+
+fig_number <- 1
+
+
+caption <- paste("Table", fig_number, ": Session Information")
+
+# session table with figure number and caption
+kable(session_table, caption = caption)
+```
+
+This table provides a concise summary of some of the most significant variables in the data set. Below is a summary of the statistics included in the table. 
+
+```{r}
+summary(session_table)
+```
+
+
+## ii
+
+The following is a rastor plot of neural activity from a single trial. A rastor plot shows the timing and pattern of neuron activity.
+
+```{r}
+# Specify the session and trial for analysis
+session_index <- 2
+trial_index <- 55
+
+# Extract the spike train data for the specified trial
+spike_data <- session[[session_index]]$spks[[trial_index]]
+
+# Get the number of neurons and time bins
+num_neurons <- dim(spike_data)[1]
+num_bins <- dim(spike_data)[2]
+
+# Create a time vector based on the number of time bins
+time <- seq(0, 0.4, length.out = num_bins)  # Assuming time bins are evenly spaced
+
+# Create a binary raster matrix indicating the presence of spikes
+raster_matrix <- matrix(0, nrow = num_neurons, ncol = num_bins)
+raster_matrix[spike_data > 0] <- 1
+
+# Create a color palette for the raster plot
+color_palette <- c("white", "black")
+
+# Set up the plot area
+plot(x = rep(time, num_neurons), y = rep(1:num_neurons, each = num_bins),
+     type = "n", xlab = "Time (s)", ylab = "Neuron",
+     xlim = c(0, 0.4), ylim = c(1, num_neurons),
+     main = paste("Raster Plot of Neural Activities", 
+                  "Session", session_index, "Trial", trial_index))
+
+# Plot the raster plot
+points(x = rep(time, num_neurons), y = rep(1:num_neurons, each = num_bins),
+       pch = "|", col = color_palette[raster_matrix + 1])
+
+```
+
+Analyzing many of these plots tells me that neuron activity is remains uniformly distributed across time. There doesn't appear to be a particular pattern to neuron activity over time.
+
+### iii
+
+The following is histogram that displays the spike count of trials over a session. Spike count is defined as the the total number of times the neurons in a trial sent a signal.
+
+```{r}
+# Specify the session for analysis
+session_index <- 5
+
+# Extract the spike train data for all trials in the session
+spike_data <- session[[session_index]]$spks
+
+# Get the number of trials and number of neurons
+num_trials <- length(spike_data)
+num_neurons <- dim(spike_data[[1]])[1]
+
+# Create a vector to store total spike counts for all trials
+total_spike_counts <- vector(length = num_trials)
+
+# Calculate the total spike count for each trial by summing across all neurons and time bins
+for (trial in 1:num_trials) {
+  total_spike_counts[trial] <- sum(spike_data[[trial]])
+}
+
+# create a sequence of trial numbers for the y-axis
+trial_numbers <- 1:num_trials
+
+barplot(total_spike_counts, horiz = FALSE, space = 0.2,
+        ylab = "Total Spike Count", xlab = "Trial",
+        main = paste("Histogram of Total Spike Count across Trials - Session", session_index))
+
+```
+Total spike count across sessions varied significantly. This leads me to believe it could be a useful predictor of an outcome variable.
+
+### iv
+
+K-means clustering:
+
+I perform k-means clustering on all of the sessions to get an idea of how the sessions may be related. I chose to use four clusters because their were four mice, and there might have been some correlation between their sessions.
+
+```{r}
+library(ggplot2)
+library(ggrepel)
+library(plotly)
+
+# Create an empty data frame to store the combined data
+combined_data <- data.frame(
+  session_index = integer(),
+  n_brain_area = integer(),
+  n_neurons = integer(),
+  stringsAsFactors = FALSE
+)
+
+for (i in 1:18) {
+  session_data <- session[[i]]
+  
+  # Extract the variables of interest
+  n_brain_area <- length(unique(session_data$brain_area))
+  n_neurons <- nrow(session_data$spks[[1]])
+  
+  # Create a data frame for the current session
+  session_combined <- data.frame(
+    session_index = i,
+    n_brain_area = n_brain_area,
+    n_neurons = n_neurons,
+    stringsAsFactors = FALSE
+  )
+  
+  combined_data <- rbind(combined_data, session_combined)
+}
+
+# Perform k-means clustering
+k <- 4  # Number of clusters
+set.seed(123)  # Set a random seed for reproducibility
+kmeans_result <- kmeans(combined_data[, c("n_brain_area", "n_neurons")], centers = k)
+
+# Add cluster labels to the combined data frame
+combined_data$cluster <- as.factor(kmeans_result$cluster)
+
+# Visualize the clustering results with annotated labels
+ggplot(combined_data, aes(x = n_brain_area, y = n_neurons, color = cluster)) +
+  geom_point() +
+  labs(x = "Number of Brain Areas", y = "Number of Neurons", color = "Cluster") +
+  ggtitle("K-means Clustering of Sessions") +
+  theme_minimal() +
+  geom_text_repel(aes(label = session_index), size = 3, nudge_x = 0.2, nudge_y = 0.2)
+```
+
+This graph of the clustering of session shows me which sessions are most closely related to each other. I note that sessions 2, 5, and 15 are closest to sessions 1 and 18, which is where our later test data will come from.
+
+## Data Integration
+
+### i/ii
+
+To perform data integration I will bring together all of the useful variables i have observed across all sessions into a data frame with a row for every trial in every session and 9 variables. The variables are mouse_name, date_exp, session_id, n_brain_areas, n_neurons, n_trials, success_rate, normalized_spike_counts, and feedback_type. The key step I took in this process was normalizing the spike count variable using min-max normalization, because I noticed how widely this variable varied.
+
+
+Having performed this integration I now use it create some more useful figues:
+
+The following is histogram of brain areas by average spike count.
+
+```{r}
+library(ggplot2)
+
+ggplot(combined_data, aes(x = factor(n_brain_area))) +
+  geom_bar() +
+  labs(x = "Number of Brain Areas", y = "Count") +
+  theme_bw() +
+  ggtitle("Average Spike Count per Number of Brain Areas Number of Brain Areas")
+```
+The number of brain areas engaged seems important for determining th total spike count.
+
+
+The following is a heat map of feedback types according to normalized spike counts and session index.
+
+```{r}
+#ggplot(combined_data, aes(x = session_index, y = normalized_spk_counts, color = feedback_type)) +
+  #labs(x = "Session Index", y = "Normalized Spike Counts", color = "Feedback Type") +
+  #theme_bw()
+
+```
+This heat map confirms further the similarity between sessions 1 and 18, with sessions 2, 5, and 15. I also notice sessions 11 is similar.
+
+The following is a box plot for success rates for each mouse. 
+
+```{r}
+library(ggplot2)
+
+# create boxplots of success percent for each mouse
+ggplot(combined_data, aes(x = mouse_name, y = success_rate)) +
+  geom_boxplot() +
+  labs(x = "Mouse", y = "Success Percent") +
+  ggtitle("Success Percent of Each Mouse") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+I notice that Hench has a similar succes rate to Cori, who is the omouse in session 1. Cori is the mouse in session 11 as well.
+
+## Predictive Modeling
+
+Using the data frame I constructed I'm now ready to build a prediction model for feedback types. 
+
+```{r}
+test_session=list()
+for(i in 1:2){
+  test_session[[i]]=readRDS(paste('./test/test',i,'.rds',sep=''))
+  print(test_session[[i]]$mouse_name)
+  print(test_session[[i]]$date_exp)
+  
+}
+```
+
+```{r}
+combined_test_data <- data.frame()  # Create an empty data frame to store the combined data
+
+for (i in 1:2) {
+  session_test_data <- test_session[[i]]
+  
+  mouse_name = session_test_data$mouse_name
+  date_exp = session_test_data$date_exp
+  n_brain_area <- length(unique(session_test_data$brain_area))
+  n_neurons <- nrow(session_test_data$spks[[1]])
+  n_trials <- length(session_test_data$feedback_type)
+  success_rate <- sum(session_test_data$feedback_type == 1) / n_trials
+  feedback_type <- session_test_data$feedback_type
+  
+  # Extract the spike count data for all trials
+  spike_data <- session_test_data$spks
+  
+  # Calculate the total spike counts for all trials
+  total_spike_counts <- sapply(spike_data, function(trial) sum(rowSums(trial)))
+  
+  # Normalize the spike count variable
+  normalized_spk_counts <- (total_spike_counts - min(total_spike_counts)) / (max(total_spike_counts) - min(total_spike_counts))
+  
+  # Combine all the variables into a data frame
+  session_test_combined <- data.frame(
+    mouse_name = session_test_data$mouse_name,
+    date_exp = session_test_data$date_exp,
+    session_index = i,
+    n_brain_area = n_brain_area,
+    n_neurons = n_neurons,
+    stringsAsFactors = FALSE,
+    n_trials = n_trials,
+    success_rate = success_rate,
+    normalized_spk_counts = normalized_spk_counts,
+    total_spike_counts = total_spike_counts,
+    feedback_type = session_test_data$feedback_type
+  )
+  
+  # Append the session data to the combined data frame
+  combined_test_data <- rbind(combined_test_data, session_test_combined)
+}
+```
+
+```{r}
+# Create an empty data frame to store the combined data
+combined_data <- data.frame(
+  session_index = integer(),
+  n_brain_area = integer(),
+  n_neurons = integer(),
+  stringsAsFactors = FALSE
+)
+
+for (i in 1:18) {
+  session_data <- session[[i]]
+  
+  # extract the variables of interest
+  mouse_name = session_data$mouse_name
+  date_exp = session_data$date_exp
+  n_brain_area <- length(unique(session_data$brain_area))
+  n_neurons <- nrow(session_data$spks[[1]])
+  n_trials <- length(session_data$feedback_type)
+  success_rate <- sum(session_data$feedback_type == 1) / n_trials
+  feedback_type <- session_data$feedback_type
+  
+   # Extract the spike count data for all trials
+  spike_data <- session_data$spks
+  
+  # Calculate the total spike counts for all trials
+  total_spike_counts <- sapply(spike_data, function(trial) sum(rowSums(trial)))
+  
+  # Normalize the spike count variable
+  normalized_spk_counts <- (total_spike_counts - min(total_spike_counts)) /   (max(total_spike_counts) - min(total_spike_counts))
+  
+  # Create a data frame for the current session
+  session_combined <- data.frame(
+    mouse_name = session_data$mouse_name,
+    date_exp = session_data$date_exp,
+    session_index = i,
+    n_brain_area = n_brain_area,
+    n_neurons = n_neurons,
+    stringsAsFactors = FALSE,
+    n_trials = n_trials,
+    success_rate = success_rate,
+    normalized_spk_counts = normalized_spk_counts,
+    total_spike_counts = total_spike_counts,
+    feedback_type = session_data$feedback_type
+  )
+  
+  # Append the session data to the combined data frame
+  combined_data <- rbind(combined_data, session_combined)
+}
+
+#k <- 4  # Number of clusters
+#set.seed(123)  # Set a random seed for reproducibility
+#kmeans_result <- kmeans(combined_data[, c("n_brain_area", "n_neurons")], centers = k)
+
+# Add cluster labels to the combined data frame
+#combined_data$cluster <- as.factor(kmeans_result$cluster)
+```
+
+The following is a mathematical representation of the logistic regression model I implement.
+
+Let \(Y\) represent the target variable (feedback type) and \(X\) represent the predictors (number of brain areas, number of neurons, success rate, and normalized spike counts).
+
+The logistic regression model can be written as:
+
+\[
+\text{{logit}}(P(Y = 1)) = \beta_0 + \beta_1 \cdot \text{{n\_brain\_area}} + \beta_2 \cdot \text{{n\_neurons}} + \beta_3 \cdot \text{{success\_rate}} + \beta_4 \cdot \text{{normalized\_spk\_counts}}
+\]
+
+where:
+- \(P(Y = 1)\) is the probability of the target variable being equal to 1 (positive class).
+- \(\text{{logit}}(p)\) is the log-odds function defined as \(\text{{logit}}(p) = \log\left(\frac{p}{1-p}\right)\).
+- \(\beta_0\) is the intercept or bias term.
+- \(\beta_1, \beta_2, \beta_3, \beta_4\) are the coefficients associated with each predictor variable.
+
+The logistic regression model is fitted using the training data with the `glm()` function in R, specifying the family as binomial and the link function as the logit link function.
+
+Note: I have limited the sessions I use to train my model to sessions 2, 5, 11, and 15. These are the session I observed through my exploratory analysis and data integration to be most similar to sessions 1 and 18.
+
+## Prediction Performance
+
+The following is the output of the confusion matrix of the prediction model.
+
+```{r}
+library(glmnet)
+library(caret)
+
+# Step 1: Prepare the data
+set.seed(523)  # Set a random seed for reproducibility
+
+# Filter the combined_data based on session_id variable
+selected_sessions <- c(2, 5, 11, 15)
+train_set <- combined_data[combined_data$session_index %in% selected_sessions, ]
+
+# Split the data into training set and test sets
+test_set <- combined_test_data
+
+# Extract predictor variables and target variable
+predictors <- c("n_brain_area", "n_neurons", "success_rate", "normalized_spk_counts")
+target <- "feedback_type"
+
+train_x <- train_set[, predictors, drop = FALSE]  # Include drop = FALSE to preserve data frame structure
+train_y <- as.factor(train_set[, target])  # Convert to factor
+test_x <- test_set[, predictors]
+test_y <- as.factor(test_set[, target])
+
+# Step 2: Train the prediction model
+# Choose a suitable machine learning algorithm and train the model
+# For example, using logistic regression
+model <- glm(train_y ~ ., data = train_x, family = binomial(link = "logit"))
+
+# Step 3: Evaluate the model
+# Predict the feedback type for the test set
+pred_y <- predict(model, newdata = test_x, type = "response")
+
+# Convert predicted probabilities to binary predictions (0 or 1)
+pred_y <- ifelse(pred_y >= 0.5, 1, 0)
+
+# Align levels of predicted and actual values
+pred_y <- factor(pred_y, levels = levels(test_y))
+
+#accuracy <- sum(pred_y == test_y) / length(test_y)
+#print(paste("Accuracy on Test Set:", accuracy))
+
+# Create confusion matrix
+confusion_matrix <- caret::confusionMatrix(pred_y, test_y)
+
+# Print the confusion matrix
+print(confusion_matrix)
+
+# Extract the confusion matrix metrics
+accuracy <- confusion_matrix$overall["Accuracy"]
+precision <- confusion_matrix$byClass["Pos Pred Value"]
+recall <- confusion_matrix$byClass["Sensitivity"]
+f1_score <- confusion_matrix$byClass["F1"]
+
+# Print the metrics
+cat("Accuracy:", accuracy, "\n")
+cat("Precision:", precision, "\n")
+cat("Recall:", recall, "\n")
+cat("F1-score:", f1_score, "\n")
+```
+The following is a typical accuracy result when attempting to implement L1-regularization.
+
+```{r}
+# Step 2: Train the prediction model with L1 regularization
+library(glmnet)
+library(caret)
+
+# Step 1: Prepare the data
+set.seed(523)  # Set a random seed for reproducibility
+
+# Filter the combined_data based on session_id variable
+selected_sessions <- c(2, 5, 15)
+train_set <- combined_data[combined_data$session_index %in% selected_sessions, ]
+
+# Split the data into training set and test sets
+test_set <- combined_test_data
+
+# Extract predictor variables and target variable
+predictors <- c("n_brain_area", "n_neurons", "n_trials", "success_rate", "normalized_spk_counts")
+target <- "feedback_type"
+
+train_x <- train_set[, predictors, drop = FALSE]  # Include drop = FALSE to preserve data frame structure
+train_y <- as.factor(train_set[, target])  # Convert to factor
+test_x <- test_set[, predictors]
+test_y <- as.factor(test_set[, target])
+
+# Step 2: Train the prediction model with L1 regularization
+library(glmnet)
+
+# Convert the data to matrix format for glmnet
+train_x_mat <- as.matrix(train_x)
+test_x_mat <- as.matrix(test_x)
+
+# Train the model with L1 regularization (lasso)
+model <- glmnet(train_x_mat, train_y, family = "binomial", alpha = 0.2)
+
+# Step 3: Evaluate the model
+# Predict the feedback type for the test set
+pred_y <- predict(model, newx = test_x_mat, type = "response")
+
+# Convert predicted probabilities to binary predictions (0 or 1)
+pred_y <- ifelse(pred_y >= 0.5, 1, 0)
+
+# Evaluate the model's performance
+# For example, calculate accuracy
+accuracy <- sum(pred_y == test_y) / length(test_y)
+
+# Print the accuracy for the test set
+print(paste("Accuracy on Test Set Using L1 regularization:", accuracy))
+
+```
+Note the much lower accuracy. I found through much trial and error that the optimal alpha value for L1_regularization is 0. Which is the same as simple logistic regression. Which is what I chosen to stick with.
+
+### Discussion
+
+In this project we aimed to investigate the relationship between key factors and the success rate of mice performing a neural decoding task.
+
+Our results yielded several interesting results. I observed that changes over the short time frame each trial is conducted in held uniform distribution of neural activity, making it an unlikely source for model training. However, the neural spike count varied much across session and thus led me to believe that it was a good variable to account for in prediction modeling. Using k-means clustering also showed how closely related some sessions are when account for key factors like number of brain areas engaged.
+
+These findings motivated which variables I chose to include in my home-made date frame. And once this data frame was made I was able to see visualize more relationships between variables. this further informed how I would build my prediction model.
+
+Namely, the number of neurons, number of brain areas, success percentage, and normalized spike count, were the variables I found most promising for prediction modeling. I used them to build a logistic regression model that that attempted to improve via L1-regularization. I found the alpha equal to 0 (regular logistic regression), turned out be the optimal model for the best accuracy.
+
+The accuracy rate for this plain-jane logistic regression model was 73%. With recall score of 0, and F1-score of NaN. The accuracy provides promise of a good model, but the recall and F1 scores suggest improvement is needed.
+
+These findings contribute to a better understanding of how neural activity plays a part in how successful we may be at performing a brain-heavy task.
+
+## Appendix
+
+```{r}
+sessionInfo()
+```
+
